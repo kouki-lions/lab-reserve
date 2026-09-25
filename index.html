@@ -229,6 +229,23 @@
     </div>
   </dialog>
 
+  <!-- 合言葉 -->
+  <dialog id="authDialog">
+    <form id="authForm" class="dlg" novalidate>
+      <h2>合言葉を入力</h2>
+      <p class="hint">研究室で共有されている合言葉を入力してください。この端末に記憶されます。</p>
+      <div class="field">
+        <label for="authInput">合言葉</label>
+        <input id="authInput" type="password" autocomplete="current-password">
+      </div>
+      <p class="error" id="authError"></p>
+      <div class="dlg-actions">
+        <span class="spacer"></span>
+        <button type="submit" class="btn primary">OK</button>
+      </div>
+    </form>
+  </dialog>
+
   <div id="loading" class="loading">読み込み中…</div>
   <div id="toast" class="toast" role="status"></div>
 
@@ -281,14 +298,56 @@ async function api(fn, arg) {
   const res = await fetch(API_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({ action: fn, payload: arg }),
+    body: JSON.stringify({ action: fn, payload: arg, passcode: getStored('labPasscode'), deviceId: deviceId() }),
     credentials: 'omit',
   });
   if (!res.ok) throw new Error('HTTP ' + res.status);
   const data = await res.json();
-  if (data && data.error) throw new Error(data.error);
+  if (data && data.error) {
+    const err = new Error(data.error);
+    err.code = data.code;
+    throw err;
+  }
   return data;
 }
+
+/* ---------- 端末への記憶（使えない環境ではメモリ上に保持） ---------- */
+const memoryStore = {};
+function getStored(key) {
+  try { return localStorage.getItem(key) || memoryStore[key] || ''; } catch (e) { return memoryStore[key] || ''; }
+}
+function setStored(key, value) {
+  memoryStore[key] = value;
+  try { localStorage.setItem(key, value); } catch (e) { /* メモリ上の値で動作を続ける */ }
+}
+/** 操作ログで端末を見分けるためのランダムなID */
+function deviceId() {
+  let id = getStored('labDeviceId');
+  if (!id) {
+    id = 'd' + Math.random().toString(36).slice(2, 10);
+    setStored('labDeviceId', id);
+  }
+  return id;
+}
+
+function askPasscode(message) {
+  $('loading').hidden = true;
+  $('authError').textContent = message || '';
+  $('authInput').value = '';
+  if (!$('authDialog').open) $('authDialog').showModal();
+  $('authInput').focus();
+}
+
+$('authForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const value = $('authInput').value.trim();
+  if (!value) { $('authError').textContent = '合言葉を入力してください。'; return; }
+  setStored('labPasscode', value);
+  $('authDialog').close();
+  load(true);
+});
+// 合言葉の画面は Esc で閉じられないようにする
+$('authDialog').addEventListener('cancel', e => e.preventDefault());
 
 function applyData(d) {
   if (!d) return;
@@ -303,7 +362,8 @@ async function load(showOverlay) {
   try {
     applyData(await api('getInitialData'));
   } catch (e) {
-    toast('データの取得に失敗しました：' + errMsg(e), true);
+    if (e.code === 'AUTH') askPasscode(e.message);
+    else toast('データの取得に失敗しました：' + errMsg(e), true);
   } finally {
     $('loading').hidden = true;
   }
@@ -327,7 +387,13 @@ async function send(dialogId, fn, payload, onOk) {
       err.textContent = (res && res.message) || '処理に失敗しました。';
     }
   } catch (e) {
-    err.textContent = '通信エラー：' + errMsg(e);
+    if (e.code === 'AUTH') {
+      setBusy(dlg, false);
+      dlg.close();
+      askPasscode(e.message);
+    } else {
+      err.textContent = '通信エラー：' + errMsg(e);
+    }
   } finally {
     setBusy(dlg, false);
   }
@@ -393,8 +459,8 @@ function toast(msg, isError) {
 }
 
 /* ---------- 予約ダイアログ ---------- */
-function loadName() { try { return localStorage.getItem('labReserveName') || ''; } catch (e) { return ''; } }
-function saveName(n) { try { localStorage.setItem('labReserveName', n); } catch (e) { /* 保存できなくても動作に影響なし */ } }
+function loadName() { return getStored('labReserveName'); }
+function saveName(n) { setStored('labReserveName', n); }
 
 function openReservation(date, slot) {
   const r = findRes(date, slot);
@@ -581,7 +647,8 @@ const Demo = (() => {
 /* ---------- 起動 ---------- */
 $('demoBanner').hidden = !DEMO;
 render();
-load(true);
+if (!DEMO && !getStored('labPasscode')) askPasscode();
+else load(true);
 </script>
 </body>
 </html>
