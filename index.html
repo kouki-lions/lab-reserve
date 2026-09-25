@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>実験室予約</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --surface: #fff; --text: #1f2328; --muted: #6b7280; --line: #d9dde3;
+    --free-bg: #dcf2e1; --free-line: #3fa45b; --free-text: #17622e;
+    --res-bg: #e4e6ea; --res-line: #9aa0a8; --res-text: #30343a;
+    --blk-bg: #fbdede; --blk-line: #d9534f; --blk-text: #a12622;
+    --primary: #1a73e8; --danger: #d93025;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text); font-size: 15px; line-height: 1.5;
+    font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", sans-serif;
+  }
+  button { font: inherit; cursor: pointer; }
+  [hidden] { display: none !important; }
+
+  .demo { background: #fff4ce; padding: 6px 16px; font-size: 13px; }
+  .topbar {
+    background: var(--surface); border-bottom: 1px solid var(--line); padding: 12px 16px;
+    display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center;
+  }
+  .topbar h1 { font-size: 18px; margin: 0 auto 0 0; }
+  .group { display: flex; gap: 6px; }
+  .btn {
+    border: 1px solid var(--line); background: var(--surface); color: var(--text);
+    border-radius: 8px; padding: 6px 12px;
+  }
+  .btn:hover:not(:disabled) { background: #eef0f3; }
+  .btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+  .btn.primary:hover:not(:disabled) { background: #1765cc; }
+  .btn.danger { color: var(--danger); border-color: #f1b5b0; }
+  .btn.small { padding: 2px 10px; font-size: 13px; }
+  .btn:disabled { opacity: .5; cursor: default; }
+
+  .subbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding: 12px 16px; }
+  .range { font-weight: 700; }
+  .legend { display: flex; gap: 12px; font-size: 13px; color: var(--muted); }
+  .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; border: 1px solid; }
+  .legend .free { background: var(--free-bg); border-color: var(--free-line); }
+  .legend .reserved { background: var(--res-bg); border-color: var(--res-line); }
+  .legend .blocked { background: var(--blk-bg); border-color: var(--blk-line); }
+
+  main { padding: 0 16px 32px; }
+
+  /* ---- 予約枠 ---- */
+  .slot {
+    width: 100%; min-height: 64px; border: 1px solid; border-radius: 8px; padding: 6px 8px;
+    text-align: left; display: flex; flex-direction: column; gap: 1px; overflow: hidden;
+  }
+  .slot.free { background: var(--free-bg); border-color: var(--free-line); color: var(--free-text); }
+  .slot.reserved { background: var(--res-bg); border-color: var(--res-line); color: var(--res-text); }
+  .slot.blocked { background: var(--blk-bg); border-color: var(--blk-line); color: var(--blk-text); cursor: not-allowed; }
+  .slot.free:hover, .slot.reserved:hover { filter: brightness(.95); }
+  .slot .no { font-size: 12px; font-weight: 700; opacity: .75; }
+  .slot .label { font-weight: 700; }
+  .slot .name { font-weight: 700; word-break: break-all; }
+  .slot .purpose {
+    font-size: 12px; opacity: .85; word-break: break-all;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .slot .warn { font-size: 11px; color: var(--blk-text); }
+
+  .sun { color: #d93025; }
+  .sat { color: #1a73e8; }
+  .today-badge {
+    display: inline-block; font-size: 11px; background: var(--primary); color: #fff;
+    border-radius: 999px; padding: 0 7px; margin-left: 6px; vertical-align: 1px;
+  }
+
+  /* ---- PC：7日 × 6限の表 ---- */
+  .pc-view { overflow-x: auto; }
+  .week { width: 100%; min-width: 760px; border-collapse: separate; border-spacing: 6px; table-layout: fixed; }
+  .week col.col-date { width: 110px; }
+  .week thead th { font-size: 13px; color: var(--muted); padding: 2px; }
+  .week tbody th { text-align: left; white-space: nowrap; padding: 0 4px; }
+  .week tr.past { opacity: .55; }
+
+  /* ---- スマートフォン：1日ごとのカード（sticky は使わない） ---- */
+  .sp-view { display: none; }
+  .day-card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 12px; }
+  .day-card.past { opacity: .6; }
+  .day-card h2 { font-size: 16px; margin: 0 0 8px; }
+  .day-card .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+  @media (max-width: 767px) {
+    .pc-view { display: none; }
+    .sp-view { display: block; }
+    .topbar h1 { width: 100%; }
+  }
+
+  /* ---- ダイアログ ---- */
+  dialog {
+    border: none; border-radius: 12px; padding: 0; color: var(--text);
+    width: min(480px, calc(100vw - 32px)); max-height: calc(100vh - 32px);
+  }
+  dialog::backdrop { background: rgba(0, 0, 0, .4); }
+  #settingsDialog { width: min(640px, calc(100vw - 32px)); }
+  .dlg { padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+  .dlg h2 { margin: 0; font-size: 18px; }
+  .dlg h3 { margin: 0 0 6px; font-size: 15px; }
+  .when { margin: -8px 0 0; font-weight: 700; }
+  .field label { display: block; font-weight: 700; margin-bottom: 4px; }
+  .field input, .field textarea, .date-add input[type=date] {
+    width: 100%; font: inherit; font-size: 16px; padding: 8px 10px;
+    border: 1px solid var(--line); border-radius: 8px;
+  }
+  .date-add input[type=date] { width: auto; }
+  .req { color: var(--danger); font-size: 12px; margin-left: 4px; }
+  .hint, .meta { font-size: 12px; color: var(--muted); margin: 0; }
+  .error { color: var(--danger); font-size: 13px; margin: 0; }
+  .error:empty { display: none; }
+  .dlg-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .spacer { flex: 1; }
+
+  .wk { border-collapse: collapse; width: 100%; }
+  .wk th, .wk td { text-align: center; padding: 4px; border-bottom: 1px solid var(--line); }
+  .wk input { width: 20px; height: 20px; accent-color: var(--danger); }
+  .date-add { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .checks { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+  .checks label { display: inline-flex; gap: 4px; align-items: center; }
+  .checks input { width: 18px; height: 18px; accent-color: var(--danger); }
+  .date-list { list-style: none; margin: 8px 0 0; padding: 0; }
+  .date-list li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .date-list li.past { opacity: .55; }
+  .date-list .empty { color: var(--muted); font-size: 13px; }
+
+  .toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 10;
+    background: #323232; color: #fff; padding: 10px 16px; border-radius: 8px;
+    max-width: calc(100vw - 32px); opacity: 0; pointer-events: none; transition: opacity .2s;
+  }
+  .toast.show { opacity: 1; }
+  .toast.error { background: #b3261e; }
+  .loading {
+    position: fixed; inset: 0; z-index: 5; background: rgba(255, 255, 255, .6);
+    display: flex; align-items: center; justify-content: center; font-weight: 700;
+  }
+</style>
+</head>
+<body>
+  <div id="demoBanner" class="demo" hidden>デモモード：API_URL が未設定のため、データはこのページ内だけに保存されます。</div>
+
+  <header class="topbar">
+    <h1>実験室予約</h1>
+    <div class="group">
+      <button type="button" class="btn" id="prevBtn">‹ 前の週</button>
+      <button type="button" class="btn" id="todayBtn">今日</button>
+      <button type="button" class="btn" id="nextBtn">次の週 ›</button>
+    </div>
+    <div class="group">
+      <button type="button" class="btn" id="reloadBtn">更新</button>
+      <button type="button" class="btn" id="settingsBtn">予約不可設定</button>
+    </div>
+  </header>
+
+  <div class="subbar">
+    <span class="range" id="rangeLabel"></span>
+    <span class="legend">
+      <span><i class="free"></i>空き</span>
+      <span><i class="reserved"></i>予約済み</span>
+      <span><i class="blocked"></i>予約不可</span>
+    </span>
+  </div>
+
+  <main id="main">
+    <div id="pcView" class="pc-view"></div>
+    <div id="spView" class="sp-view"></div>
+  </main>
+
+  <!-- 予約登録・変更・削除 -->
+  <dialog id="resDialog">
+    <form id="resForm" class="dlg" novalidate>
+      <h2 id="resTitle">予約登録</h2>
+      <p class="when" id="resWhen"></p>
+      <div class="field">
+        <label for="resName">名前<span class="req">必須</span></label>
+        <input id="resName" maxlength="50" autocomplete="name">
+      </div>
+      <div class="field">
+        <label for="resPurpose">使用目的（任意）</label>
+        <textarea id="resPurpose" rows="3" maxlength="200"></textarea>
+      </div>
+      <p class="meta" id="resMeta"></p>
+      <p class="error" id="resError"></p>
+      <div class="dlg-actions">
+        <button type="button" class="btn danger" id="resDelete">削除</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn" data-close>キャンセル</button>
+        <button type="submit" class="btn primary" id="resSubmit">予約する</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 予約不可設定 -->
+  <dialog id="settingsDialog">
+    <div class="dlg">
+      <h2>予約不可設定</h2>
+      <section>
+        <h3>毎週固定の予約不可</h3>
+        <p class="hint">チェックした時限が毎週予約不可になります。</p>
+        <table class="wk">
+          <thead><tr><th></th><th>1限</th><th>2限</th><th>3限</th><th>4限</th><th>5限</th><th>6限</th></tr></thead>
+          <tbody id="weeklyBody"></tbody>
+        </table>
+      </section>
+      <section>
+        <h3>特定日の予約不可</h3>
+        <div class="date-add">
+          <input type="date" id="newDate" aria-label="日付">
+          <div class="checks" id="newSlots"></div>
+          <button type="button" class="btn small" id="allSlotsBtn">終日</button>
+          <button type="button" class="btn small primary" id="addDateBtn">追加</button>
+        </div>
+        <ul class="date-list" id="dateList"></ul>
+      </section>
+      <p class="hint">変更は「保存」を押すまで反映されません。</p>
+      <p class="error" id="setError"></p>
+      <div class="dlg-actions">
+        <span class="spacer"></span>
+        <button type="button" class="btn" data-close>キャンセル</button>
+        <button type="button" class="btn primary" id="saveSettingsBtn">保存</button>
+      </div>
+    </div>
+  </dialog>
+
+  <div id="loading" class="loading">読み込み中…</div>
+  <div id="toast" class="toast" role="status"></div>
+
+<script>
+// ▼ GAS をウェブアプリとしてデプロイしたときの URL（…/exec）を貼り付ける。空のままだとデモモード。
+const API_URL = '';
+
+const SLOTS = [1, 2, 3, 4, 5, 6];
+const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
+const DAYS_SHOWN = 7;
+const DEMO = !API_URL;
+
+const state = { reservations: [], settings: emptySettings(), start: today(), loadedAt: 0 };
+let editing = null; // 予約ダイアログで扱っている枠 { date, slot, res }
+let draft = null;   // 設定ダイアログで編集中のコピー
+
+const $ = id => document.getElementById(id);
+
+/* ---------- 日付・共通 ---------- */
+function emptySettings() {
+  return { weekly: { 0: [], 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] }, dates: {} };
+}
+function pad(n) { return String(n).padStart(2, '0'); }
+function ymd(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
+function parseYmd(s) { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); }
+function addDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
+function today() { const t = new Date(); return new Date(t.getFullYear(), t.getMonth(), t.getDate()); }
+function fmtMD(d) { return `${d.getMonth() + 1}/${d.getDate()}(${WEEKDAYS[d.getDay()]})`; }
+function fmtFull(d) { return `${d.getFullYear()}/${fmtMD(d)}`; }
+function dowClass(dow) { return dow === 0 ? 'sun' : dow === 6 ? 'sat' : ''; }
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function errMsg(e) { return e && e.message ? e.message : String(e); }
+
+function findRes(date, slot) {
+  return state.reservations.find(r => r.date === date && Number(r.slot) === slot) || null;
+}
+function isBlockedBy(settings, date, slot) {
+  const dow = parseYmd(date).getDay();
+  return (settings.weekly[dow] || []).includes(slot) || (settings.dates[date] || []).includes(slot);
+}
+
+/* ---------- サーバー呼び出し ---------- */
+// text/plain で送るのは CORS のプリフライト（GAS が応答できない）を避けるため。
+// credentials: 'omit' で Google のログイン情報を送らず、複数アカウントでも動くようにする。
+async function api(fn, arg) {
+  if (DEMO) return new Promise(resolve => setTimeout(() => resolve(Demo[fn](arg)), 300));
+  const res = await fetch(API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ action: fn, payload: arg }),
+    credentials: 'omit',
+  });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const data = await res.json();
+  if (data && data.error) throw new Error(data.error);
+  return data;
+}
+
+function applyData(d) {
+  if (!d) return;
+  if (Array.isArray(d.reservations)) state.reservations = d.reservations;
+  if (d.settings) state.settings = d.settings;
+  state.loadedAt = Date.now();
+  render();
+}
+
+async function load(showOverlay) {
+  if (showOverlay) $('loading').hidden = false;
+  try {
+    applyData(await api('getInitialData'));
+  } catch (e) {
+    toast('データの取得に失敗しました：' + errMsg(e), true);
+  } finally {
+    $('loading').hidden = true;
+  }
+}
+
+/** ダイアログから保存系 API を呼ぶ。成功時は閉じる、失敗時はダイアログ内にエラー表示。 */
+async function send(dialogId, fn, payload, onOk) {
+  const dlg = $(dialogId);
+  const err = dlg.querySelector('.error');
+  err.textContent = '';
+  setBusy(dlg, true);
+  try {
+    const res = await api(fn, payload);
+    applyData(res);
+    if (res && res.ok) {
+      setBusy(dlg, false);
+      dlg.close();
+      toast(res.message);
+      if (onOk) onOk(res);
+    } else {
+      err.textContent = (res && res.message) || '処理に失敗しました。';
+    }
+  } catch (e) {
+    err.textContent = '通信エラー：' + errMsg(e);
+  } finally {
+    setBusy(dlg, false);
+  }
+}
+
+function setBusy(dlg, busy) {
+  dlg.dataset.busy = busy ? '1' : '';
+  dlg.querySelectorAll('button, input, textarea').forEach(el => { el.disabled = busy; });
+}
+
+/* ---------- 描画 ---------- */
+function render() {
+  const days = Array.from({ length: DAYS_SHOWN }, (_, i) => addDays(state.start, i));
+  const todayKey = ymd(today());
+  $('rangeLabel').textContent = `${fmtFull(days[0])} 〜 ${fmtMD(days[DAYS_SHOWN - 1])}`;
+
+  const dayLabel = (d, key) =>
+    `<span class="${dowClass(d.getDay())}">${fmtMD(d)}</span>` +
+    (key === todayKey ? '<span class="today-badge">今日</span>' : '');
+
+  // PC：表形式
+  let html = '<table class="week"><colgroup><col class="col-date">' + SLOTS.map(() => '<col>').join('') +
+    '</colgroup><thead><tr><th>日付</th>' + SLOTS.map(s => `<th>${s}限</th>`).join('') + '</tr></thead><tbody>';
+  days.forEach(d => {
+    const key = ymd(d);
+    html += `<tr class="${key < todayKey ? 'past' : ''}"><th>${dayLabel(d, key)}</th>` +
+      SLOTS.map(s => `<td>${slotHtml(key, s, false)}</td>`).join('') + '</tr>';
+  });
+  $('pcView').innerHTML = html + '</tbody></table>';
+
+  // スマートフォン：カード形式（2列グリッド → 1-2 / 3-4 / 5-6 限）
+  $('spView').innerHTML = days.map(d => {
+    const key = ymd(d);
+    return `<section class="day-card ${key < todayKey ? 'past' : ''}"><h2>${dayLabel(d, key)}</h2>` +
+      `<div class="grid">${SLOTS.map(s => slotHtml(key, s, true)).join('')}</div></section>`;
+  }).join('');
+}
+
+function slotHtml(date, slot, showNo) {
+  const r = findRes(date, slot);
+  const blocked = isBlockedBy(state.settings, date, slot);
+  const no = showNo ? `<span class="no">${slot}限</span>` : '';
+  const attrs = `data-date="${date}" data-slot="${slot}"`;
+  if (r) {
+    return `<button type="button" class="slot reserved" ${attrs} title="${esc(r.purpose)}">${no}` +
+      `<span class="name">${esc(r.name)}</span>` +
+      (r.purpose ? `<span class="purpose">${esc(r.purpose)}</span>` : '') +
+      (blocked ? '<span class="warn">※予約不可の枠です</span>' : '') + '</button>';
+  }
+  if (blocked) {
+    return `<button type="button" class="slot blocked" disabled ${attrs}>${no}<span class="label">予約不可</span></button>`;
+  }
+  return `<button type="button" class="slot free" ${attrs}>${no}<span class="label">空き</span></button>`;
+}
+
+let toastTimer = null;
+function toast(msg, isError) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (isError ? ' error' : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.className = 'toast'; }, 3000);
+}
+
+/* ---------- 予約ダイアログ ---------- */
+function loadName() { try { return localStorage.getItem('labReserveName') || ''; } catch (e) { return ''; } }
+function saveName(n) { try { localStorage.setItem('labReserveName', n); } catch (e) { /* 保存できなくても動作に影響なし */ } }
+
+function openReservation(date, slot) {
+  const r = findRes(date, slot);
+  if (!r && isBlockedBy(state.settings, date, slot)) { toast('この枠は予約できません。', true); return; }
+  editing = { date, slot, res: r };
+  $('resTitle').textContent = r ? '予約の変更・削除' : '予約登録';
+  $('resWhen').textContent = `${fmtFull(parseYmd(date))} ${slot}限`;
+  $('resName').value = r ? r.name : loadName();
+  $('resPurpose').value = r ? (r.purpose || '') : '';
+  $('resMeta').textContent = r ? `最終更新：${String(r.updatedAt).slice(0, 16)}` : '';
+  $('resError').textContent = '';
+  $('resSubmit').textContent = r ? '変更を保存' : '予約する';
+  setBusy($('resDialog'), false);
+  $('resDelete').hidden = !r;
+  $('resDialog').showModal();
+  if (!r && !$('resName').value) $('resName').focus();
+}
+
+$('resForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const name = $('resName').value.trim();
+  const purpose = $('resPurpose').value.trim();
+  const { date, slot, res } = editing;
+  const err = $('resError');
+  if (!name) { err.textContent = '名前を入力してください。'; $('resName').focus(); return; }
+  // クライアント側の事前チェック（最終判定はサーバー側で排他制御付きで行う）
+  if (!res && findRes(date, slot)) { err.textContent = 'この枠は既に予約されています。'; return; }
+  if (!res && isBlockedBy(state.settings, date, slot)) { err.textContent = 'この枠は予約不可です。'; return; }
+  send('resDialog', 'saveReservation', {
+    mode: res ? 'update' : 'create', date, slot, name, purpose,
+    expectedUpdatedAt: res ? res.updatedAt : '',
+  }, () => saveName(name));
+});
+
+$('resDelete').addEventListener('click', () => {
+  const { date, slot, res } = editing;
+  if (!res || !confirm(`${fmtFull(parseYmd(date))} ${slot}限の予約（${res.name}）を削除しますか？`)) return;
+  send('resDialog', 'deleteReservation', { date, slot, expectedUpdatedAt: res.updatedAt });
+});
+
+/* ---------- 予約不可設定ダイアログ ---------- */
+function openSettings() {
+  draft = JSON.parse(JSON.stringify(state.settings));
+  for (let d = 0; d < 7; d++) draft.weekly[d] = draft.weekly[d] || [];
+  draft.dates = draft.dates || {};
+  renderWeekly();
+  renderDateList();
+  $('newDate').value = ymd(today());
+  $('newSlots').querySelectorAll('input').forEach(i => { i.checked = false; });
+  $('setError').textContent = '';
+  setBusy($('settingsDialog'), false);
+  $('settingsDialog').showModal();
+}
+
+function renderWeekly() {
+  $('weeklyBody').innerHTML = [1, 2, 3, 4, 5, 6, 0].map(dow =>
+    `<tr><th class="${dowClass(dow)}">${WEEKDAYS[dow]}</th>` +
+    SLOTS.map(s => `<td><input type="checkbox" data-dow="${dow}" data-slot="${s}" aria-label="${WEEKDAYS[dow]}曜 ${s}限"` +
+      `${draft.weekly[dow].includes(s) ? ' checked' : ''}></td>`).join('') + '</tr>'
+  ).join('');
+}
+
+function slotsText(arr) {
+  return arr.length === SLOTS.length ? '終日（1〜6限）' : arr.join('・') + '限';
+}
+
+function renderDateList() {
+  const keys = Object.keys(draft.dates).sort();
+  const todayKey = ymd(today());
+  $('dateList').innerHTML = keys.length ? keys.map(k =>
+    `<li class="${k < todayKey ? 'past' : ''}"><span><strong>${fmtFull(parseYmd(k))}</strong>　${slotsText(draft.dates[k])}</span>` +
+    `<button type="button" class="btn small danger" data-del="${k}">削除</button></li>`
+  ).join('') : '<li class="empty">登録なし</li>';
+}
+
+$('newSlots').innerHTML = SLOTS.map(s => `<label><input type="checkbox" value="${s}">${s}限</label>`).join('');
+
+$('weeklyBody').addEventListener('change', e => {
+  const cb = e.target;
+  const dow = cb.dataset.dow;
+  const set = new Set(draft.weekly[dow]);
+  cb.checked ? set.add(Number(cb.dataset.slot)) : set.delete(Number(cb.dataset.slot));
+  draft.weekly[dow] = [...set].sort((a, b) => a - b);
+});
+
+$('allSlotsBtn').addEventListener('click', () => {
+  $('newSlots').querySelectorAll('input').forEach(i => { i.checked = true; });
+});
+
+$('addDateBtn').addEventListener('click', () => {
+  const key = $('newDate').value;
+  const slots = [...$('newSlots').querySelectorAll('input:checked')].map(i => Number(i.value));
+  if (!key) { $('setError').textContent = '日付を選択してください。'; return; }
+  if (!slots.length) { $('setError').textContent = '時限を1つ以上選択してください。'; return; }
+  $('setError').textContent = '';
+  draft.dates[key] = slots;
+  $('newSlots').querySelectorAll('input').forEach(i => { i.checked = false; });
+  renderDateList();
+});
+
+$('dateList').addEventListener('click', e => {
+  const b = e.target.closest('[data-del]');
+  if (!b) return;
+  delete draft.dates[b.dataset.del];
+  renderDateList();
+});
+
+$('saveSettingsBtn').addEventListener('click', () => {
+  send('settingsDialog', 'saveSettings', draft, res => {
+    if (res.conflicts && res.conflicts.length) {
+      alert('次の予約が予約不可の枠に入っています。必要に応じて予約者に連絡してください。\n\n' +
+        res.conflicts.map(r => `${fmtFull(parseYmd(r.date))} ${r.slot}限　${r.name}`).join('\n'));
+    }
+  });
+});
+
+/* ---------- 共通イベント ---------- */
+$('main').addEventListener('click', e => {
+  const b = e.target.closest('button.slot');
+  if (b && !b.disabled) openReservation(b.dataset.date, Number(b.dataset.slot));
+});
+document.querySelectorAll('[data-close]').forEach(b =>
+  b.addEventListener('click', () => b.closest('dialog').close()));
+document.querySelectorAll('dialog').forEach(dlg =>
+  dlg.addEventListener('cancel', e => { if (dlg.dataset.busy) e.preventDefault(); }));
+
+$('prevBtn').addEventListener('click', () => { state.start = addDays(state.start, -DAYS_SHOWN); render(); });
+$('nextBtn').addEventListener('click', () => { state.start = addDays(state.start, DAYS_SHOWN); render(); });
+$('todayBtn').addEventListener('click', () => { state.start = today(); render(); });
+$('reloadBtn').addEventListener('click', () => load(true));
+$('settingsBtn').addEventListener('click', openSettings);
+
+// 他のメンバーの予約を反映するため、画面に戻ったときと2分ごとに再取得
+const dialogOpen = () => [...document.querySelectorAll('dialog')].some(d => d.open);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && Date.now() - state.loadedAt > 30000) load(false);
+});
+setInterval(() => {
+  if (document.visibilityState === 'visible' && !dialogOpen()) load(false);
+}, 120000);
+
+/* ---------- デモ用の擬似サーバー（GAS 上では使われない） ---------- */
+const Demo = (() => {
+  const db = { reservations: [], settings: emptySettings() };
+  db.settings.weekly[0] = [1, 2, 3, 4, 5, 6];
+  db.settings.weekly[3] = [5, 6];
+  db.settings.dates[ymd(addDays(today(), 2))] = [1, 2];
+  const stamp = () => new Date().toISOString();
+  db.reservations.push({ date: ymd(today()), slot: 2, name: '山田', purpose: 'XRD測定', updatedAt: stamp() });
+  db.reservations.push({ date: ymd(addDays(today(), 1)), slot: 4, name: '佐藤', purpose: '', updatedAt: stamp() });
+  const copy = o => JSON.parse(JSON.stringify(o));
+  const out = (ok, message, extra) =>
+    Object.assign({ ok, message, reservations: copy(db.reservations), settings: copy(db.settings) }, extra);
+  const find = (d, s) => db.reservations.find(r => r.date === d && r.slot === s);
+  return {
+    getInitialData: () => ({ reservations: copy(db.reservations), settings: copy(db.settings) }),
+    saveReservation(p) {
+      const ex = find(p.date, p.slot);
+      if (!String(p.name || '').trim()) return out(false, '名前は必須です。');
+      if (p.mode === 'create') {
+        if (ex) return out(false, 'この枠は既に予約されています。');
+        if (isBlockedBy(db.settings, p.date, p.slot)) return out(false, 'この枠は予約不可に設定されています。');
+        db.reservations.push({ date: p.date, slot: p.slot, name: p.name, purpose: p.purpose, updatedAt: stamp() });
+        return out(true, '予約しました。');
+      }
+      if (!ex || ex.updatedAt !== p.expectedUpdatedAt) return out(false, '他の人がこの予約を変更しました。');
+      Object.assign(ex, { name: p.name, purpose: p.purpose, updatedAt: stamp() });
+      return out(true, '予約を変更しました。');
+    },
+    deleteReservation(p) {
+      const ex = find(p.date, p.slot);
+      if (!ex || ex.updatedAt !== p.expectedUpdatedAt) return out(false, '他の人がこの予約を変更しました。');
+      db.reservations.splice(db.reservations.indexOf(ex), 1);
+      return out(true, '予約を削除しました。');
+    },
+    saveSettings(s) {
+      db.settings = copy(s);
+      const conflicts = db.reservations.filter(r => isBlockedBy(db.settings, r.date, r.slot));
+      return out(true, '予約不可設定を保存しました。', { conflicts: copy(conflicts) });
+    },
+  };
+})();
+
+/* ---------- 起動 ---------- */
+$('demoBanner').hidden = !DEMO;
+render();
+load(true);
+</script>
+</body>
+</html>
